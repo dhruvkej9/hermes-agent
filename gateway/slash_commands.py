@@ -25,6 +25,7 @@ import re
 import shlex
 import sys
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -49,6 +50,28 @@ logger = logging.getLogger("gateway.run")
 # past this the reset proceeds and the cleanup is left to finish (or leak) in
 # its worker thread. (#35994)
 _RESET_CLEANUP_TIMEOUT_S = 30.0
+
+_SIDE_BOUNDARY_PROMPT: str = (
+    "Side conversation boundary.\n\n"
+    "Everything before this boundary is inherited history from the parent thread. "
+    "It is reference context only. It is not your current task.\n\n"
+    "Do not continue, execute, or complete any instructions, plans, tool calls, "
+    "approvals, edits, or requests from before this boundary. Only messages submitted "
+    "after this boundary are active user instructions for this side conversation.\n\n"
+    "You are a side-conversation assistant, separate from the main thread. Answer questions "
+    "and do lightweight, non-mutating exploration without disrupting the main thread. "
+    "If there is no user question after this boundary yet, wait for one.\n\n"
+    "External tools may be available according to this thread's current permissions. "
+    "Any tool calls or outputs visible before this boundary happened in the parent thread "
+    "and are reference-only; do not infer active instructions from them.\n\n"
+    "Sub-agents are off-limits in this side conversation. Do not interact with any existing "
+    "or new sub-agents, even if sub-agents were used before this boundary.\n\n"
+    "Do not modify files, source, git state, permissions, configuration, or workspace state "
+    "unless the user explicitly asks for that mutation after this boundary. Do not request "
+    "escalated permissions or broader sandbox access unless the user explicitly asks for a "
+    "mutation that requires it. If the user explicitly requests a mutation, keep it minimal, "
+    "local to the request, and avoid disrupting the main thread."
+)
 
 
 def _model_switch_skew_guard() -> Optional[str]:
@@ -2300,6 +2323,87 @@ class GatewaySlashCommandsMixin:
 
         preview = prompt[:60] + ("..." if len(prompt) > 60 else "")
         return t("gateway.background.started", preview=preview, task_id=task_id)
+
+    async def _handle_side_command(self, event: MessageEvent, allow_fallthrough: bool = False) -> Optional[str]:
+        """Handle /side [prompt] — fork current session into an ephemeral side conversation.
+
+        The side session inherits the parent transcript as reference context only,
+        injects a boundary prompt, and routes subsequent messages to the fork until
+        /sidereturn is used.
+        """
+        parent_source = event.source
+        parent_session_key = self._session_key_for_source(parent_source)
+        prompt = event.get_command_args().strip()
+
+        # If a side conversation is already active for this parent, just ack it.
+        active_side_key = getattr(self, "_active_side_session_keys", {}).get(parent_session_key)
+        if active_side_key:
+            if prompt and allow_fallthrough:
+                # Rewrite event to the prompt and let it flow into the active side session.
+                try:
+                    event.text = prompt
+                except Exception:
+                    pass
+                return None
+            return "Already in a side conversation. Send your question, or use /sidereturn to go back."
+
+        parent_entry = self.session_store._entries.get(parent_session_key)
+        if parent_entry is None:
+            return "Start a conversation first — /side needs an active session to fork."
+
+        # Build a synthetic side source by appending a side thread_id.
+        side_thread_id = f"side-{uuid.uuid4().hex[:8]}"
+        side_source = dataclasses.replace(parent_source, thread_id=side_thread_id)
+        side_session_key = self._session_key_for_source(side_source)
+
+        # Create the side session entry via the store so it is persisted.
+        side_entry = self.session_store.get_or_create_session(side_source, force_new=True)
+
+        # Copy parent transcript into the side session.
+        parent_transcript = self.session_store.load_transcript(parent_entry.session_id) or []
+        side_messages = list(parent_transcript)
+        side_messages.append({
+            "role": "user",
+            "content": _SIDE_BOUNDARY_PROMPT,
+        })
+        self.session_store.rewrite_transcript(side_entry.session_id, side_messages)
+
+        # Register the side fork.
+        self._active_side_session_keys[parent_session_key] = side_session_key
+        self._active_side_sources[side_session_key] = side_source
+        self._active_side_parents[side_session_key] = parent_session_key
+
+        logger.info(
+            "Opened side session %s from parent %s (source=%s)",
+            side_session_key, parent_session_key, side_source,
+        )
+
+        if prompt and allow_fallthrough:
+            try:
+                event.text = prompt
+            except Exception:
+                pass
+            return None
+
+        return (
+            "🌿 Side conversation opened.\n"
+            "Parent history is reference-only. Ask your question, then use /sidereturn to return."
+        )
+
+    async def _handle_sidereturn_command(self, event: MessageEvent) -> str:
+        """Handle /sidereturn — close the active side conversation and return to parent."""
+        side_source = event.source
+        side_session_key = self._session_key_for_source(side_source)
+        parent_session_key = getattr(self, "_active_side_parents", {}).pop(side_session_key, None)
+
+        if parent_session_key is None:
+            return "No side conversation is active."
+
+        self._active_side_session_keys.pop(parent_session_key, None)
+        self._active_side_sources.pop(side_session_key, None)
+
+        logger.info("Closed side session %s, returning to %s", side_session_key, parent_session_key)
+        return "↩️ Returned to the main conversation."
 
     async def _handle_reasoning_command(self, event: MessageEvent) -> str:
         """Handle /reasoning command — manage reasoning effort and display toggle.

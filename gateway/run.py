@@ -2728,6 +2728,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Key: session_key, Value: True when a prompt is waiting for user input.
         self._update_prompt_pending: Dict[str, bool] = {}
 
+        # Side-conversation state.
+        # Key: parent_session_key, Value: side_session_key
+        self._active_side_session_keys: Dict[str, str] = {}
+        # Key: side_session_key, Value: side SessionSource (for routing inbound messages)
+        self._active_side_sources: Dict[str, SessionSource] = {}
+        # Key: side_session_key, Value: parent_session_key
+        self._active_side_parents: Dict[str, str] = {}
+
         # Slash-confirm state lives in tools.slash_confirm (module-level),
         # so platform adapters can resolve callbacks without a backref to
         # this runner.  Keep a local counter for confirm_id generation so
@@ -7873,6 +7881,20 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Otherwise control/session commands like /new or /help get silently
         # consumed as update answers instead of being dispatched normally.
         _quick_key = self._session_key_for_source(source)
+
+        # Side-conversation routing: if this parent session has an active side
+        # fork, rewrite the source and session key to the side session so the
+        # message lands in the ephemeral fork. Commands like /sidereturn are
+        # handled in the side context and close the fork.
+        _side_session_key = getattr(self, "_active_side_session_keys", {}).get(_quick_key)
+        if _side_session_key:
+            _side_source = getattr(self, "_active_side_sources", {}).get(_side_session_key)
+            if _side_source is not None:
+                source = _side_source
+                event = dataclasses.replace(event, source=source)
+                _quick_key = _side_session_key
+                logger.info("Routing message to side session %s", _quick_key)
+
         _update_prompts = getattr(self, "_update_prompt_pending", {})
         if _update_prompts.get(_quick_key):
             raw = (event.text or "").strip()
@@ -8246,6 +8268,22 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # name, so this branch handles both commands.
             if _cmd_def_inner and _cmd_def_inner.name == "background":
                 return await self._handle_background_command(event)
+
+            # /side must bypass the running-agent guard — it forks the session
+            # into an ephemeral side conversation and must not interrupt.
+            if _cmd_def_inner and _cmd_def_inner.name == "side":
+                # If /side includes a prompt, let it open the fork and then fall
+                # through so the prompt runs in the side session.
+                _side_ack = await self._handle_side_command(event, allow_fallthrough=True)
+                if _side_ack is not None:
+                    return _side_ack
+                # fallthrough: the handler rewrote event.text to the prompt and
+                # set up the side session routing; continue to normal agent flow.
+
+            # /sidereturn must bypass the running-agent guard — it closes the
+            # side conversation and returns to the parent session.
+            if _cmd_def_inner and _cmd_def_inner.name == "sidereturn":
+                return await self._handle_sidereturn_command(event)
 
             # /kanban must bypass the guard. It writes to a profile-agnostic
             # DB (kanban.db), not to the running agent's state. In fact
@@ -8762,6 +8800,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         if canonical == "background":
             return await self._handle_background_command(event)
+
+        if canonical == "side":
+            # If /side includes a prompt, open the fork and fall through so the
+            # prompt runs in the side session. Otherwise just open it.
+            _side_ack = await self._handle_side_command(event, allow_fallthrough=True)
+            if _side_ack is not None:
+                return _side_ack
+            # fallthrough to agent processing with event.text rewritten to the prompt
+
+        if canonical == "sidereturn":
+            return await self._handle_sidereturn_command(event)
 
         if canonical == "steer":
             # No active agent — /steer has no tool call to inject into.
