@@ -3776,6 +3776,12 @@ def _launch_external_cron_worker(job: dict) -> bool:
     repo_root = Path(__file__).resolve().parent.parent
     worker_env = pin_hermes_tree_on_pythonpath(worker_env, repo_root)
     worker_env[WORKER_MARKER] = "1"
+    # The worker runs as `-m cron.scheduler`, but cron/__init__.py already imports
+    # cron.scheduler, so runpy emits "found in sys.modules after import of package"
+    # on stderr. The worker still exits 0 and does its job — but this dispatcher
+    # treats any stderr before ownership acknowledgement as a dispatch failure, so
+    # the warning has to stay out of the captured stream.
+    worker_env.setdefault("PYTHONWARNINGS", "ignore::RuntimeWarning")
     try:
         stderr_fd = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
