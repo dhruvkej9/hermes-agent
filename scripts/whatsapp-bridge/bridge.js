@@ -38,6 +38,8 @@ import {
   buildPollPayload,
   createReconnectScheduler,
   createVersionResolver,
+  createCredsGuard,
+  recoverCredentialFiles,
   installConsoleStamps,
   buildLocationPayload,
   buildTextSendPayload,
@@ -389,7 +391,11 @@ const scheduleReconnect = createReconnectScheduler(() => startSocket());
 const getWAVersion = createVersionResolver(fetchLatestBaileysVersion);
 
 async function startSocket() {
+  // Repair auth files truncated by a previous failed write before Baileys reads
+  // them — a 0-byte creds.json reads as "no creds" and silently forces a re-pair.
+  recoverCredentialFiles(SESSION_DIR);
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
+  const guardedSaveCreds = createCredsGuard(SESSION_DIR, saveCreds);
   const version = await getWAVersion();
 
   sock = makeWASocket({
@@ -409,7 +415,7 @@ async function startSocket() {
     },
   });
 
-  sock.ev.on('creds.update', () => { saveCreds(); lidToPhone = buildLidMap(); });
+  sock.ev.on('creds.update', () => { guardedSaveCreds(); lidToPhone = buildLidMap(); });
 
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
