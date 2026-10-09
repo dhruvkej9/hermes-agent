@@ -162,6 +162,49 @@ class TestParseSystemdDuration:
     def test_minutes(self):
         assert sf.parse_systemd_duration_to_us("3min") == 180 * 1_000_000
 
+
+# ---------------------------------------------------------------------------
+# _systemd_timeout_stop_us
+# ---------------------------------------------------------------------------
+
+class TestSystemdTimeoutStopUs:
+    """Regression: `systemctl show` answers for a unit that does not exist — exit 0 plus the
+    manager's compiled-in default (90s). The probe tries `--user` first, so a system-scope install
+    read that phantom 90s and logged "Stale systemd unit" on every start, forever, even with a
+    correct TimeoutStopSec=210 in the real unit."""
+
+    def test_skips_missing_unit_and_reads_the_real_one(self, monkeypatch):
+        # --user: the unit genuinely is not installed. system: TimeoutStopSec=210s.
+        def run(cmd, **kwargs):
+            user = "--user" in cmd
+            prop = cmd[-1]
+            if user:
+                return subprocess.CompletedProcess(cmd, 0, "LoadState=not-found\n")
+            if prop == "LoadState":
+                return subprocess.CompletedProcess(cmd, 0, "LoadState=loaded\n")
+            return subprocess.CompletedProcess(cmd, 0, "TimeoutStopUSec=3min 30s\n")
+
+        monkeypatch.setattr(sf.subprocess, "run", run)
+        assert sf._systemd_timeout_stop_us("hermes-gateway.service") == 210 * 1_000_000
+
+    def test_returns_none_when_the_unit_is_missing_everywhere(self, monkeypatch):
+        def run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, 0, "LoadState=not-found\n")
+        monkeypatch.setattr(sf.subprocess, "run", run)
+        assert sf._systemd_timeout_stop_us("hermes-gateway.service") is None
+
+    def test_prefers_a_real_user_unit(self, monkeypatch):
+        def run(cmd, **kwargs):
+            user = "--user" in cmd
+            prop = cmd[-1]
+            if prop == "LoadState":
+                return subprocess.CompletedProcess(cmd, 0, "LoadState=loaded\n")
+            value = "120s" if user else "210s"
+            return subprocess.CompletedProcess(cmd, 0, f"TimeoutStopUSec={value}\n")
+        monkeypatch.setattr(sf.subprocess, "run", run)
+        assert sf._systemd_timeout_stop_us("hermes-gateway.service") == 120 * 1_000_000
+
+
 # ---------------------------------------------------------------------------
 # check_systemd_timing_alignment
 # ---------------------------------------------------------------------------

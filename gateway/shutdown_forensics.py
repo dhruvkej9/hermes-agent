@@ -228,6 +228,20 @@ def check_systemd_timing_alignment(
 def _systemd_timeout_stop_us(unit_name: str) -> Optional[int]:
     """``TimeoutStopUSec`` of ``unit_name`` in microseconds; ``--user`` first (hermes' usual)."""
     for flag in (["--user"], []):
+        # `systemctl show` answers for a unit that does not exist: it exits 0 and prints the
+        # manager's compiled-in default (90s on a stock systemd). Accepting that would report
+        # every system-scope gateway as stale — the --user probe below is tried first precisely
+        # because hermes usually installs a user unit, so a system install hits the missing-unit
+        # default and warns forever even with a correct TimeoutStopSec. Confirm the unit exists.
+        try:
+            loaded = subprocess.run(
+                ["systemctl", *flag, "show", unit_name, "--property=LoadState"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2.0,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            continue
+        if loaded.returncode != 0 or "LoadState=not-found" in loaded.stdout:
+            continue
         try:
             result = subprocess.run(
                 ["systemctl", *flag, "show", unit_name, "--property=TimeoutStopUSec"],
