@@ -1,5 +1,5 @@
 import path from 'path';
-import { mkdirSync, writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync, readFileSync, renameSync, existsSync, readdirSync, statSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { format } from 'util';
 
@@ -725,6 +725,160 @@ export function createVersionResolver(fetchVersionFn, {
     }
     return cachedVersion;
   };
+}
+
+/**
+ * Credential durability guard.
+ *
+ * Baileys' `useMultiFileAuthState` persists creds with a plain
+ * `writeFileSync`, which truncates first and writes second. When the disk is
+ * full the file lands as 0 bytes and the write throws. The next start reads an
+ * empty creds.json, finds no auth keys, and silently re-enters pairing: a fresh
+ * QR on every restart, while the gateway adapter only ever reports
+ * "whatsapp connect timed out after 30s".
+ *
+ * This wraps that saveCreds() call so the last good copy always survives:
+ *   - snapshot every auth file that currently parses to `<file>.bak` first
+ *   - let Baileys write as it normally would
+ *   - re-validate afterwards; anything that came back empty or unparseable is
+ *     rolled back from the backup instead of being left broken
+ *   - ENOSPC is logged loudly, because a full disk silently un-pairs WhatsApp
+ *
+ * ponytail: one backup generation and the two canonical auth filenames. Enough
+ * for the truncation case; add rotation if creds corruption ever needs
+ * multi-step forensics.
+ */
+const AUTH_FILE_RE = /^(creds|app-state-sync-key.*)\.json$/;
+const DISK_FULL_CODES = new Set(['ENOSPC', 'EDQUOT', 'EFBIG']);
+
+function isDiskFull(err) {
+  return DISK_FULL_CODES.has(err?.code);
+}
+
+/** A credential file is only usable if it is non-empty and parses as an object. */
+export function isValidCredentialFile(raw) {
+  if (!raw || !raw.trim()) return false;
+  try {
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed) && typeof parsed === 'object' && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
+
+/** tmp file + rename: a failed write can never leave a half-written live file. */
+function writeAtomic(file, raw) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, raw, 'utf8');
+  renameSync(tmp, file);
+}
+
+function readValidOrNull(file) {
+  try {
+    if (!existsSync(file)) return null;
+    const raw = readFileSync(file, 'utf8');
+    return isValidCredentialFile(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function authFilesIn(sessionDir) {
+  try {
+    return readdirSync(sessionDir).filter((name) => AUTH_FILE_RE.test(name));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Wrap Baileys' saveCreds() with backup + validation + rollback.
+ * One instance per session dir; reuse the returned function for every write.
+ */
+export function createCredsGuard(sessionDir, saveCreds, { log = console.log } = {}) {
+  return function guardedSaveCreds(...args) {
+    const files = authFilesIn(sessionDir);
+    const backups = new Map();
+    for (const name of files) {
+      const file = path.join(sessionDir, name);
+      const raw = readValidOrNull(file);
+      if (!raw) continue;
+      backups.set(name, raw);
+      // Persist the last good copy so a later start can self-heal even if this
+      // process is killed between the failed write and the rollback below.
+      try {
+        writeAtomic(`${file}.bak`, raw);
+      } catch (err) {
+        log(`⚠️  Could not back up ${name}: ${err?.message || err}`);
+      }
+    }
+
+    let writeError = null;
+    try {
+      saveCreds(...args);
+    } catch (err) {
+      writeError = err;
+    }
+
+    // Roll back anything the write left empty or unparseable.
+    for (const name of authFilesIn(sessionDir)) {
+      const file = path.join(sessionDir, name);
+      if (readValidOrNull(file)) continue;
+      const backup = backups.get(name);
+      if (!backup) continue;
+      try {
+        writeAtomic(file, backup);
+        log(`🚨 ${name} came back empty after a failed write (${writeError?.code || 'unknown'}) ` +
+            '— restored the last good copy instead of losing the pairing.');
+      } catch (err) {
+        log(`🚨 ${name} is empty AND the restore failed (${err?.message || err}). ` +
+            'Delete the session and re-pair with WhatsApp.');
+      }
+    }
+
+    if (!writeError) return;
+    if (isDiskFull(writeError)) {
+      log(`🚨 DISK FULL (${writeError.code}): WhatsApp credentials could not be saved. ` +
+          'Free disk space now — a restart with unwritable creds silently drops the pairing.');
+    } else {
+      log(`⚠️  Credential save failed: ${writeError?.message || writeError}`);
+    }
+  };
+}
+
+/**
+ * Startup recovery: any auth file sitting at 0 bytes was truncated by a failed
+ * write (ENOSPC is the usual cause). Restore what we can; say so loudly when we
+ * cannot, because that means a re-pair is required.
+ *
+ * Call BEFORE useMultiFileAuthState(). Returns the restored file names.
+ */
+export function recoverCredentialFiles(sessionDir, { log = console.log } = {}) {
+  const restored = [];
+  for (const name of authFilesIn(sessionDir)) {
+    const file = path.join(sessionDir, name);
+    let size;
+    try {
+      size = statSync(file).size;
+    } catch {
+      continue;
+    }
+    if (size > 0) continue;
+    const backup = readValidOrNull(`${file}.bak`);
+    if (!backup) {
+      log(`🚨 ${name} is 0 bytes with no usable backup — WhatsApp will need to be re-paired ` +
+          '(a full disk during a previous run usually causes this).');
+      continue;
+    }
+    try {
+      writeAtomic(file, backup);
+      log(`🚨 Restored ${name} from backup (was 0 bytes — truncated write, usually a full disk).`);
+      restored.push(name);
+    } catch (err) {
+      log(`🚨 Failed to restore ${name}: ${err?.message || err}`);
+    }
+  }
+  return restored;
 }
 
 const pad = (value, width = 2) => String(value).padStart(width, '0');
