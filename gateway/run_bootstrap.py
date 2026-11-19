@@ -175,6 +175,9 @@ def _start_gateway_make_shutdown_signal_handler(runner, _signal_initiated_shutdo
     """Build the SIGINT/SIGTERM handler; ``_signal_initiated_shutdown[0]`` records an unplanned signal."""
     from gateway.run import (_best_effort, _hermes_home, asyncio, logger, signal)
     planned_stop_seen = [False]
+    # The loop holds tasks only weakly; keep each stop task until it ends. Not runner._background_tasks,
+    # which stop() itself cancels.
+    stop_tasks: set = set()
 
     def shutdown_signal_handler(received_signal=None):
         # Planned --replace takeover (sibling marked this PID): exit 0 so systemd won't revive us.
@@ -238,7 +241,9 @@ def _start_gateway_make_shutdown_signal_handler(runner, _signal_initiated_shutdo
             # here, and a sibling-driven --replace takeover is not launchd-timed either, so both
             # keep the configured drain. _stop_impl uses this to cap the drain to the live budget.
             runner._stop_requested_by_signal = True
-        asyncio.create_task(runner.stop())
+        stop_task = asyncio.create_task(runner.stop())
+        stop_tasks.add(stop_task)
+        stop_task.add_done_callback(stop_tasks.discard)
     return shutdown_signal_handler
 
 

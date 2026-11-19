@@ -216,7 +216,7 @@ def test_cli_sigterm_after_watcher_consumed_the_marker_stays_planned(tmp_path, m
     monkeypatch.setattr(status_mod, "_get_planned_stop_marker_path", lambda: marker)
     monkeypatch.setattr(status_mod, "consume_takeover_marker_for_self", lambda: False)
     monkeypatch.setattr(forensics, "snapshot_shutdown_context", lambda *a, **k: None)
-    monkeypatch.setattr(run_mod.asyncio, "create_task", lambda coro: coro.close())
+    monkeypatch.setattr(run_mod.asyncio, "create_task", lambda coro: coro.close() or MagicMock())
 
     def _handler():
         runner = SimpleNamespace(_signal_initiated_shutdown=False, stop=lambda: asyncio.sleep(0))

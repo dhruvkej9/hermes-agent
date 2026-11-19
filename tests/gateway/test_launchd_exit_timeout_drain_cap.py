@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import signal
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -116,7 +117,7 @@ def test_sigterm_handler_marks_stop_as_signal_driven_unless_planned_takeover(mon
     monkeypatch.setattr(status, "consume_takeover_marker_for_self", lambda: takeover)
     monkeypatch.setattr(status, "consume_planned_stop_marker_for_self", lambda: False)
     monkeypatch.setattr(forensics, "snapshot_shutdown_context", lambda *a, **k: None)
-    monkeypatch.setattr(run_mod.asyncio, "create_task", lambda coro: coro.close())
+    monkeypatch.setattr(run_mod.asyncio, "create_task", lambda coro: coro.close() or MagicMock())
     runner = _runner(drain=180.0, launchd=60.0, by_signal=False)
     runner.stop = lambda: asyncio.sleep(0)
     run_mod._start_gateway_make_shutdown_signal_handler(runner, [False])(signal.SIGTERM)
