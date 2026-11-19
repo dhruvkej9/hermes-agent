@@ -626,8 +626,8 @@ async def _handle_drive_comment_event(client: Any, data: Any, *, self_open_id: s
         return logger.info("[Feishu-Comment] User %s denied (policy=%s, rule=%s)", from_open_id, rule.policy, rule.match_source)
     logger.info("[Feishu-Comment] Access granted: user=%s policy=%s rule=%s", from_open_id, rule.policy, rule.match_source)
     reaction_kwargs = dict(file_token=file_token, file_type=file_type, reply_id=reply_id, reaction_type="OK")
-    if reply_id:
-        asyncio.ensure_future(update_comment_reaction(client, "add", **reaction_kwargs))
+    # Runs beside the fetch and the agent; held here so the cleanup can wait for it.
+    add_reaction = asyncio.ensure_future(update_comment_reaction(client, "add", **reaction_kwargs)) if reply_id else None
     logger.info("[Feishu-Comment] [Step 2/5] Parallel fetch: doc meta + comment batch_query")
     doc_meta, comment_detail = await asyncio.gather(asyncio.ensure_future(query_document_meta(client, file_token, file_type)),
                                                     asyncio.ensure_future(batch_query_comment(client, file_token, file_type, comment_id)))
@@ -654,6 +654,7 @@ async def _handle_drive_comment_event(client: Any, data: Any, *, self_open_id: s
         logger.info("[Feishu-Comment] [Step 5/5] Delivering reply (is_whole=%s, comment_id=%s)", is_whole, comment_id)
         delivered = await deliver_comment_reply(client, file_token, file_type, comment_id, response, is_whole)
         logger.log(logging.INFO if delivered else logging.ERROR, "[Feishu-Comment] Reply delivered successfully" if delivered else "[Feishu-Comment] Failed to deliver reply")
-    if reply_id:  # best-effort cleanup of the OK reaction
+    if add_reaction is not None:  # best-effort cleanup of the OK reaction, never before the add lands
+        await asyncio.gather(add_reaction, return_exceptions=True)
         await update_comment_reaction(client, "delete", **reaction_kwargs)
     logger.info("[Feishu-Comment] ========== handle_drive_comment_event END ==========")

@@ -160,3 +160,34 @@ class TestResolveModelAndRuntime(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReactionOrdering(unittest.TestCase):
+    @patch("plugins.platforms.feishu.feishu_comment_rules.has_wiki_keys", return_value=False)
+    @patch("plugins.platforms.feishu.feishu_comment_rules.is_user_allowed", return_value=True)
+    @patch("plugins.platforms.feishu.feishu_comment_rules.resolve_rule")
+    @patch("plugins.platforms.feishu.feishu_comment_rules.load_config")
+    def test_ok_reaction_delete_waits_for_the_add(self, mock_load, mock_resolve, _allowed, _wiki):
+        """A slow add must finish before the cleanup delete, or the OK reaction stays on the comment."""
+        import plugins.platforms.feishu.feishu_comment as fc
+        from plugins.platforms.feishu.feishu_comment_rules import ResolvedCommentRule
+
+        mock_resolve.return_value = ResolvedCommentRule(True, "allowlist", frozenset(), "top")
+        mock_load.return_value = Mock()
+        order = []
+
+        async def reaction(client, action, **kwargs):
+            order.append(f"{action}:start")
+            if action == "add":
+                await asyncio.sleep(0.3)
+            order.append(f"{action}:end")
+            return True
+
+        with patch.object(fc, "update_comment_reaction", reaction), \
+             patch.object(fc, "query_document_meta", AsyncMock(return_value={})), \
+             patch.object(fc, "batch_query_comment", AsyncMock(return_value={})), \
+             patch.object(fc, "_local_comment_prompt", AsyncMock(return_value="prompt")), \
+             patch.object(fc, "_run_comment_agent", return_value=fc._NO_REPLY_SENTINEL):
+            asyncio.run(fc.handle_drive_comment_event(Mock(), _make_event(), self_open_id="ou_bot"))
+
+        assert order.index("add:end") < order.index("delete:start"), order
