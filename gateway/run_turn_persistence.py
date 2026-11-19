@@ -310,7 +310,11 @@ class GatewayTurnPersistenceMixin:
             watchers = process_registry.pending_watchers
             process_registry.pending_watchers = []
             for i, watcher in enumerate(watchers):
-                asyncio.create_task(self._run_process_watcher(watcher))
+                # Same as startup-recovered watchers: held until done, crashes logged.
+                self._spawn_supervised(
+                    lambda w=watcher: self._run_process_watcher(w),
+                    f"process_watcher:{watcher.get('session_id')}", restart=False,
+                )
                 if i % 100 == 99:
                     await asyncio.sleep(0)
         except Exception as e:
