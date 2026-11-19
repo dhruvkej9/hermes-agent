@@ -489,14 +489,18 @@ class QQAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
             self._session_id = None
             self._last_seq = None
 
-    @staticmethod
-    def _create_task(coro):
-        """Schedule a coroutine; returns None (no error) when no loop is running
+    def _create_task(self, coro):
+        """Schedule a coroutine and keep a reference until it ends (the loop holds tasks only weakly;
+        ``disconnect`` cancels what is left). Returns None (no error) when no loop is running
         (tests call _dispatch_payload synchronously)."""
         try:
-            return asyncio.get_running_loop().create_task(coro)
+            task = asyncio.get_running_loop().create_task(coro)
         except RuntimeError:
+            coro.close()
             return None
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     def _close_ws_soon(self) -> None:
         """Close the WS so _read_events raises and _listen_loop reconnects (with Resume)."""
@@ -525,7 +529,7 @@ class QQAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
             elif t == "RESUMED":
                 logger.info("[%s] Session resumed", self._log_tag)
             elif t in self._INBOUND_HANDLERS:
-                asyncio.create_task(self._on_message(t, d))
+                self._create_task(self._on_message(t, d))
             elif t == "INTERACTION_CREATE":
                 self._create_task(self._on_interaction(d))
             else:
