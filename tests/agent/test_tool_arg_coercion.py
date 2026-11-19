@@ -132,6 +132,14 @@ class TestCoerceToolArgs:
     def test_empty_args(self):
         assert coerce_tool_args("test_tool", {}) == {}
 
+    def test_array_string_with_raw_newline_in_a_value_is_parsed(self):
+        # Models often JSON-encode an array but leave multi-line content unescaped.
+        schema = self._mock_schema({"operations": {"type": "array", "items": {"type": "object"}}})
+        raw = '[{"action": "patch", "content": "line one\nline two"}]'  # a real newline, not \\n
+        with patch("tools.arg_coercion.registry.get_schema", return_value=schema):
+            result = coerce_tool_args("test_tool", {"operations": raw})
+        assert result["operations"] == [{"action": "patch", "content": "line one\nline two"}]
+
 
 
 

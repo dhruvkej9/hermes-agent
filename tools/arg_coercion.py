@@ -136,7 +136,7 @@ def _normalize_json_strings_for_schema(
         if not ((expects_array and trimmed.startswith("[")) or (expects_object and trimmed.startswith("{"))):
             return value
         try:
-            parsed = json.loads(trimmed)
+            parsed = json.loads(trimmed, strict=False)  # models often leave raw newlines inside strings
         except (ValueError, TypeError):
             return value
         if not ((isinstance(parsed, list) and expects_array) or (isinstance(parsed, dict) and expects_object)):
@@ -202,7 +202,7 @@ def _coerce_json(value: str, expected_python_type: type):
     """json.loads *value* when the schema expects array/object; original string on mismatch."""
     name = expected_python_type.__name__
     try:
-        parsed = json.loads(value)
+        parsed = json.loads(value, strict=False)  # models often leave raw newlines inside strings
     except (ValueError, TypeError) as exc:
         logger.warning("coerce_tool_args: failed to parse string as JSON for expected type %s: %s", name, exc)
         return value
