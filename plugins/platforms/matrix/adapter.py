@@ -2537,7 +2537,9 @@ class MatrixAdapter(BasePlatformAdapter):
                 await self.send_read_receipt(room_id, event_id)
             except Exception as exc:  # pragma: no cover — defensive
                 logger.debug("Matrix: background read receipt failed: %s", exc)
-        asyncio.ensure_future(_send())
+        task = asyncio.ensure_future(_send())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def send_read_receipt(self, room_id: str, event_id: str) -> bool:
         if not self._client:
