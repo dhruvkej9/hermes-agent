@@ -1382,7 +1382,11 @@ class SlackAdapter(SlackSocketLifecycleMixin, SlackVaultCodeMixin, BasePlatformA
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(self._restart_socket_mode("socket task exited"))
+        # Own set, not _background_tasks: disconnect() cancels those.
+        tasks = self._lazy_attr("_socket_restart_tasks", set)
+        task = loop.create_task(self._restart_socket_mode("socket task exited"))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
 
     def _describe_slack_api_error(
         self, response: Any, *, file_obj: Optional[dict[str, Any]] = None) -> Optional[str]:

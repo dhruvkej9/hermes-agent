@@ -5684,3 +5684,30 @@ class TestNonConversationalSubtypeAllowlist:
         for event in events:
             accepted = await adapter._prefilter_inbound(event, None)
             assert accepted is not None and accepted[0]["channel"] == "C_FREE", event.get("subtype")
+
+
+
+@pytest.mark.asyncio
+async def test_socket_mode_restart_task_is_held_until_done(adapter):
+    adapter._running = True
+    started, gate = asyncio.Event(), asyncio.Event()
+
+    async def slow_restart(reason):
+        started.set()
+        await gate.wait()
+
+    adapter._restart_socket_mode = slow_restart
+
+    async def crash():
+        raise ConnectionResetError("socket gone")
+
+    sock = asyncio.create_task(crash())
+    await asyncio.sleep(0)
+    adapter._socket_mode_task = sock
+    adapter._on_socket_mode_task_done(sock)
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    (restart,) = adapter._socket_restart_tasks
+    gate.set()
+    await asyncio.wait_for(restart, timeout=2)
+    assert not adapter._socket_restart_tasks
