@@ -9,6 +9,7 @@ OpenAI-compatible frontend connects at http://localhost:8642/v1 with API_SERVER_
 import asyncio
 import errno
 import hashlib
+import inspect
 import itertools
 import json
 from contextlib import contextmanager, nullcontext, suppress
@@ -155,7 +156,7 @@ def _session_row(session, entry=None) -> dict[str, Any]:
 async def _call_verifier(verifier, *args, **kwargs):
     """Await a sync-or-async verifier; sync ones may do blocking network I/O (signing-cert / JWKS
     fetches), so they run off the loop."""
-    if asyncio.iscoroutinefunction(verifier):
+    if inspect.iscoroutinefunction(verifier):
         return await verifier(*args, **kwargs)
     return await asyncio.to_thread(verifier, *args, **kwargs)
 

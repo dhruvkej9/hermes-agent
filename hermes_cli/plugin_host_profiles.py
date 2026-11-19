@@ -153,7 +153,7 @@ def _profile_proxy(base: type, plugin_dir: str, module_name: str, entry: dict[st
 
 
 def _as_method(call: Callable[..., Any]) -> Callable[..., Any]:
-    if asyncio.iscoroutinefunction(call):
+    if inspect.iscoroutinefunction(call):
         async def method(self_: Any, *args: Any, **kwargs: Any) -> Any:
             return await call(*args, **kwargs)
     else:
