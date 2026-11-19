@@ -781,3 +781,16 @@ class TestBlueBubblesAttachmentAuthorization:
 
         assert response.status == 200
         assert mark_read.await_count == (1 if verdict is True else 0)
+
+
+def test_temp_guid_is_current_epoch_without_deprecation_warning():
+    import time
+    import warnings
+
+    from plugins.platforms.bluebubbles.adapter import _temp_guid
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)  # datetime.utcnow() warns since 3.12
+        guid = _temp_guid()
+    assert guid.startswith("temp-")
+    assert abs(float(guid.removeprefix("temp-")) - time.time()) < 60

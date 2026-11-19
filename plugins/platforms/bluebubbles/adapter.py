@@ -106,7 +106,7 @@ def _closed_ext(mime: str, overrides: dict[str, str], fallback: str) -> str:
 
 
 def _temp_guid() -> str:
-    return f"temp-{datetime.utcnow().timestamp()}"
+    return f"temp-{datetime.now().timestamp()}"
 
 
 def _ok():
