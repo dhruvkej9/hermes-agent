@@ -238,3 +238,12 @@ async def test_process_message_incapable_platform_does_not_schedule_delete():
     assert delete_calls == []
 
 
+@pytest.mark.asyncio
+async def test_schedule_ephemeral_delete_task_is_held_until_done():
+    # The loop keeps tasks only weakly; the adapter must hold the TTL sleeper.
+    adapter = _delete_adapter()
+    adapter._schedule_ephemeral_delete(chat_id="42", message_id="m-3", ttl_seconds=60)
+    (task,) = adapter._background_tasks
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert not adapter._background_tasks
