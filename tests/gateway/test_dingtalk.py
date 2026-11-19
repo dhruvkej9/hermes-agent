@@ -493,6 +493,35 @@ class TestIncomingHandlerProcess:
         processing_gate.set()
         await asyncio.sleep(0.05)
 
+    @pytest.mark.asyncio
+    async def test_process_tracks_message_task_until_done(self):
+        """The dispatched task is held in _bg_tasks so it cannot be GC'd mid-run
+        and disconnect() can cancel it."""
+        from plugins.platforms.dingtalk.adapter import _IncomingHandler, DingTalkAdapter
+
+        started = asyncio.Event()
+        gate = asyncio.Event()
+
+        async def slow_on_message(msg):
+            started.set()
+            await gate.wait()
+
+        adapter = DingTalkAdapter(PlatformConfig(enabled=True))
+        adapter._on_message = slow_on_message
+        handler = _IncomingHandler(adapter, asyncio.get_running_loop())
+
+        callback = MagicMock()
+        # No msgId, so no "thinking" emotion task is spawned next to it.
+        callback.data = {"msgtype": "text", "text": {"content": "hi"}, "senderId": "u", "conversationId": "c"}
+
+        await handler.process(callback)
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert len(adapter._bg_tasks) == 1
+
+        gate.set()
+        await asyncio.wait_for(asyncio.gather(*list(adapter._bg_tasks)), timeout=2)
+        assert not adapter._bg_tasks
+
 # ---------------------------------------------------------------------------
 # Text extraction — mention preservation + platform sanity
 # ---------------------------------------------------------------------------
