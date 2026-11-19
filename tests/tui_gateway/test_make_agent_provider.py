@@ -24,6 +24,14 @@ def test_probe_config_health_flags_null_sections():
     assert "model" not in msg
 
 
+def test_probe_config_health_ignores_null_scalar_defaults():
+    """Keys whose default is a scalar None are unset values, not empty sections."""
+    from tui_gateway.server import _probe_config_health
+
+    assert _probe_config_health({"max_concurrent_sessions": None, "context_file_max_chars": None}) == ""
+    assert "agent" in _probe_config_health({"agent": None, "max_concurrent_sessions": None})
+
+
 def test_apply_model_switch_does_not_leak_process_env():
     """Core fix for cross-session contamination: an in-session /model switch
     must mutate only the target session (record a per-session override + switch

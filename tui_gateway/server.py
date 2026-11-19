@@ -1332,8 +1332,10 @@ def _probe_config_health(cfg: dict) -> str:
     """Warn on bare YAML keys (`agent:` → None, silently dropping nested settings) and an unknown ``display.personality``."""
     if not isinstance(cfg, dict):
         return ""
+    from hermes_cli.config_defaults import DEFAULT_CONFIG
     warnings: list[str] = []
-    if null_keys := sorted(k for k, v in cfg.items() if v is None):
+    # A key whose default is a scalar (``max_concurrent_sessions: null``) is just unset, not an empty section.
+    if null_keys := sorted(k for k, v in cfg.items() if v is None and isinstance(DEFAULT_CONFIG.get(k, {}), dict)):
         keys = ", ".join(f"`{k}`" for k in null_keys)
         warnings.append(f"config.yaml has empty section(s): {keys}. Remove the line(s) or set them to `{{}}` — "
                         f"empty sections silently drop nested settings.")
