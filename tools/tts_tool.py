@@ -262,8 +262,12 @@ def _apply_call_overrides(tts_config: dict[str, Any], speed: Optional[float]):
     resolve the provider name. ``tts.provider`` in config.yaml is the only backend selector
     (#90109): there is no per-call override, so a leaked platform hint cannot reroute speech to
     another vendor behind the operator's back."""
-    if speed is not None:
-        tts_config = {**tts_config, "speed": max(0.25, min(4.0, float(speed)))}
+    if speed is not None and str(speed).strip():
+        try:
+            tts_config = {**tts_config, "speed": max(0.25, min(4.0, float(speed)))}
+        except (TypeError, ValueError):
+            # Models sometimes send "" or "fast"; keep the configured speed instead of failing.
+            logger.warning("Ignoring invalid per-call TTS speed %r", speed)
     return tts_config, _get_provider(tts_config)
 
 
