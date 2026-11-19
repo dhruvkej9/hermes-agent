@@ -811,6 +811,13 @@ class WeixinAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
         self._mark_disconnected()
         logger.info("[%s] Disconnected", self.name)
 
+    def _spawn_tracked(self, coro) -> None:
+        """Run ``coro`` as a task held in ``_background_tasks`` until it ends: the loop keeps tasks
+        only weakly, and the shutdown sweep cancels what is tracked there."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
     async def _poll_loop(self) -> None:
         assert self._poll_session is not None
         sync_buf = _load_sync_buf(self._hermes_home, self._account_id)
@@ -845,7 +852,7 @@ class WeixinAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
                 # Dispatch before persisting: the off-loop write is an await, and a disconnect that
                 # cancels it must not leave the advanced cursor on disk with this batch undelivered.
                 for message in response.get("msgs") or []:
-                    asyncio.create_task(self._process_message_safe(message))
+                    self._spawn_tracked(self._process_message_safe(message))
                 # atomic_json_write fsyncs + renames: persist off the loop, and only when the cursor
                 # moved (an empty long-poll echoes the same buffer back every cycle).
                 if response.get("get_updates_buf") and str(response["get_updates_buf"]) != sync_buf:
@@ -907,7 +914,7 @@ class WeixinAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
         if context_token:
             await self._token_store.set(self._account_id, sender_id, context_token)
         if self._poll_session and self._token and not self._typing_cache.get(sender_id):
-            asyncio.create_task(self._fetch_typing_ticket(self._poll_session, sender_id, context_token or None, "getConfig failed"))
+            self._spawn_tracked(self._fetch_typing_ticket(self._poll_session, sender_id, context_token or None, "getConfig failed"))
         media_paths: list[str] = []
         media_types: list[str] = []
         for item in item_list:
