@@ -686,6 +686,7 @@ class TestMCPLoopDrainOnStop:
 
         assert any(
             "still pending after" in record.getMessage()
+            and "cancellation_resistant" in record.getMessage()  # names the stuck task
             for record in caplog.records
         )
 

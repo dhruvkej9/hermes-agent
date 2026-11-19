@@ -418,7 +418,10 @@ async def _drain_mcp_loop_tasks(*, timeout: Optional[float] = None) -> None:
         if not task.cancelled():
             task.exception()  # mark retrieved so asyncio doesn't warn "exception was never retrieved"
     if still_pending:
-        logger.warning("%d MCP loop task(s) still pending after %.1fs drain", len(still_pending), timeout)
+        # Name them: a bare count gives no lead on which server or task ignores cancellation.
+        names = sorted({getattr(t.get_coro(), "__qualname__", None) or t.get_name() for t in still_pending})
+        logger.warning("%d MCP loop task(s) still pending after %.1fs drain: %s",
+                       len(still_pending), timeout, ", ".join(names))
 
 
 async def _drain_and_stop_mcp_loop() -> None:
