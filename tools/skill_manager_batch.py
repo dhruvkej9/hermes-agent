@@ -91,6 +91,10 @@ def _validate_batch_ops(operations, default_name, tool_error):
         return None, tool_error(f"operations[{i}]{msg}", success=False)
     names = []
     for i, op in enumerate(operations):
+        if isinstance(op, str):
+            # An unparseable JSON array string reaches here wrapped as one string element.
+            return fail(i, " is a string, not an object. Send operations as a native JSON array of "
+                           "objects; if you sent it as a JSON-encoded string, that string was not valid JSON.")
         if not isinstance(op, dict) or not op.get("action"):
             return fail(i, " needs an 'action'.")
         act = op["action"]
