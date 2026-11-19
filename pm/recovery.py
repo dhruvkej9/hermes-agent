@@ -27,7 +27,7 @@ def validate_environment(python: Path | list[str], *, env: dict, cwd: Path) -> N
     script = (
         "import importlib, importlib.metadata, pathlib, re, tomllib\n"
         "project = tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8-sig'))['project']\n"
-        "required = {re.split(r'[\\[<>=!~; @]', dep, 1)[0].lower().replace('_', '-')\n"
+        "required = {re.split(r'[\\[<>=!~; @]', dep, maxsplit=1)[0].lower().replace('_', '-')\n"
         "            for dep in project.get('dependencies', [])}\n"
         f"checks = {STARTUP_IMPORTS!r}\n"
         "for distribution, module, attribute in checks:\n"

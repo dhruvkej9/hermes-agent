@@ -472,7 +472,7 @@ def _version_tuple(v: str) -> Optional[tuple]:
     """``v1.2.3-rc1`` / ``1.2.3rc1`` / ``1.2.3.post1`` → ``(1, 2, 3)``; ``None`` when a segment has no
     leading digits. PEP 440 pre/post/dev suffixes glued to a segment (``0rc1``) are dropped so an rc
     *target* still gates and an rc *running* version does not disable every gate."""
-    parts = re.split(r"[-+]", str(v).strip().lstrip("v"), 1)[0].split(".")
+    parts = re.split(r"[-+]", str(v).strip().lstrip("v"), maxsplit=1)[0].split(".")
     parts += ["0"] * (3 - len(parts))
     out = []
     for x in parts[:3]:

@@ -189,7 +189,7 @@ _VERSION_OPS = {">=": operator.ge, "<=": operator.le, "==": operator.eq, "!=": o
 
 def _parse_semver(v: str) -> tuple[int, int, int]:
     """major.minor.patch only; pre-release / build metadata ("0.12.0-rc1+abc") stripped."""
-    parts = re.split(r"[-+]", str(v).strip().lstrip("v"), 1)[0].split(".")
+    parts = re.split(r"[-+]", str(v).strip().lstrip("v"), maxsplit=1)[0].split(".")
     parts += ["0"] * (3 - len(parts))
     try:
         return int(parts[0]), int(parts[1]), int(parts[2])
