@@ -781,3 +781,36 @@ class TestBlueBubblesAttachmentAuthorization:
 
         assert response.status == 200
         assert mark_read.await_count == (1 if verdict is True else 0)
+
+    @pytest.mark.asyncio
+    async def test_read_receipt_task_is_tracked_until_done(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, send_read_receipts=True)
+        adapter.set_authorization_check(lambda *args, **kwargs: True)
+        started, gate = asyncio.Event(), asyncio.Event()
+
+        async def fake_handle_message(event):
+            pass
+
+        async def slow_mark_read(chat_id):
+            started.set()
+            await gate.wait()
+
+        monkeypatch.setattr(adapter, "handle_message", fake_handle_message)
+        monkeypatch.setattr(adapter, "mark_read", slow_mark_read)
+        await adapter._handle_webhook(_FakeBlueBubblesRequest({
+            "type": "new-message",
+            "data": {
+                "guid": "msg-rr-track",
+                "text": "hello",
+                "handle": {"address": "+155****0199"},
+                "isFromMe": False,
+                "chats": [{"guid": "iMessage;-;+155****0199"}],
+            },
+        }))
+        await asyncio.wait_for(started.wait(), timeout=2)
+
+        tracked = [t for t in adapter._background_tasks if "slow_mark_read" in repr(t.get_coro())]
+        assert len(tracked) == 1
+        gate.set()
+        await asyncio.wait_for(tracked[0], timeout=2)
+        assert tracked[0] not in adapter._background_tasks
