@@ -652,12 +652,23 @@ def _shlex_tokens(line: str, punctuation_chars: str = ";&|()") -> list[str]:
     return list(lexer)
 
 
+def _is_redirect_ampersand(tokens: list[str], position: int) -> bool:
+    """Whether the `&` at *position* belongs to a redirection (`>&F`, `2>&1`, `<&3`, `&>F`).
+    shlex splits it off as punctuation, but it is not the background operator: without this,
+    `tput setaf 1 >&/dev/null` (stock Ubuntu ~/.bashrc) yields `/dev/null` as a command."""
+    if tokens[position] != "&":
+        return False
+    before = tokens[position - 1] if position else ""
+    after = tokens[position + 1] if position + 1 < len(tokens) else ""
+    return before[-1:] in ("<", ">") or after[:1] == ">"
+
+
 def _split_segments(tokens: list[str], *, keep_controls: bool = False) -> Iterator[list[str]]:
     """Yield non-empty runs of *tokens* between control-operator tokens; with *keep_controls* each
     control token is also yielded as its own segment so the line can be rebuilt in order."""
     segment: list[str] = []
-    for token in tokens:
-        if token and set(token) <= _CONTROL_CHARS:
+    for position, token in enumerate(tokens):
+        if token and set(token) <= _CONTROL_CHARS and not _is_redirect_ampersand(tokens, position):
             if segment:
                 yield segment
                 segment = []
