@@ -175,6 +175,7 @@ def _start_gateway_make_shutdown_signal_handler(runner, _signal_initiated_shutdo
     """Build the SIGINT/SIGTERM handler; ``_signal_initiated_shutdown[0]`` records an unplanned signal."""
     from gateway.run import (_best_effort, _hermes_home, asyncio, logger, signal)
     planned_stop_seen = [False]
+    context_logged = [False]
 
     def shutdown_signal_handler(received_signal=None):
         # Planned --replace takeover (sibling marked this PID): exit 0 so systemd won't revive us.
@@ -217,7 +218,11 @@ def _start_gateway_make_shutdown_signal_handler(runner, _signal_initiated_shutdo
             _signal_initiated_shutdown[0] = runner._signal_initiated_shutdown = True
             logger.info("Received %s — initiating shutdown", sig_name or "SIGTERM/SIGINT")
 
-        if _shutdown_ctx is not None:
+        # One context line and one diagnostic per process: `hermes gateway stop` reaches us twice
+        # (marker watcher, then its SIGTERM) and the second snapshot adds nothing.
+        if _shutdown_ctx is not None and not context_logged[0]:
+            context_logged[0] = True
+
             def _log_context() -> None:
                 # The most useful line for "gateway keeps dying" tickets.
                 from gateway.shutdown_forensics import format_context_for_log
