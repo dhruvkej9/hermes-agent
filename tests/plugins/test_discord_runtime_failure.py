@@ -38,3 +38,27 @@ async def test_discord_bot_task_runtime_exit_notifies_gateway_for_reconnect(monk
     adapter._notify_fatal_error.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_gateway_exit_notify_task_is_held_until_done():
+    adapter = DiscordAdapter(PlatformConfig(enabled=True, token="token"))
+    adapter._running = True
+    started, gate = asyncio.Event(), asyncio.Event()
+
+    async def slow_notify():
+        started.set()
+        await gate.wait()
+
+    adapter._notify_fatal_error = slow_notify
+
+    async def crash():
+        raise ConnectionResetError("gone")
+
+    task = asyncio.create_task(crash())
+    await asyncio.sleep(0)
+    adapter._handle_bot_task_done(task)
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    (notify_task,) = adapter._fatal_notify_tasks
+    gate.set()
+    await asyncio.wait_for(notify_task, timeout=2)
+    assert not adapter._fatal_notify_tasks

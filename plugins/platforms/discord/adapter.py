@@ -1401,7 +1401,11 @@ class DiscordAdapter(DiscordLiveGatesMixin, DiscordCommandSyncMixin, DiscordAuth
                     "[%s] Failed to notify gateway supervisor about Discord task exit: %s",
                     self.name, notify_exc, exc_info=True,
                 )
-        asyncio.create_task(_notify())
+        # Own set, not _background_tasks: the gateway answers with disconnect(), which cancels those.
+        notify_tasks = self.__dict__.setdefault("_fatal_notify_tasks", set())
+        notify_task = asyncio.create_task(_notify())
+        notify_tasks.add(notify_task)
+        notify_task.add_done_callback(notify_tasks.discard)
 
     async def connect(self, *, is_reconnect: bool = False) -> bool:
         """Connect to Discord and start receiving events."""
