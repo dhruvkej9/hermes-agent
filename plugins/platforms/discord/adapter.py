@@ -3993,9 +3993,11 @@ class DiscordAdapter(DiscordLiveGatesMixin, DiscordCommandSyncMixin, DiscordAuth
             logger.debug("[Discord] Could not send unauthorized ephemeral: %s", e)
         # Fire-and-forget: don't block the interaction handler on Telegram I/O.
         try:
-            asyncio.create_task(self._notify_unauthorized_slash(
+            task = asyncio.create_task(self._notify_unauthorized_slash(
                 user_name, user_id, chan_id, guild_id, command_text, reason,
             ))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
         except Exception as e:
             logger.debug("[Discord] Could not schedule admin notify task: %s", e)
         return False

@@ -333,6 +333,33 @@ async def test_unauthorized_attempt_notifies_telegram(adapter):
     assert "DISCORD_ALLOWED_USERS" in msg
 
 
+@pytest.mark.asyncio
+async def test_unauthorized_notify_task_is_tracked_until_done(adapter):
+    from gateway.session import Platform
+
+    started, gate = asyncio.Event(), asyncio.Event()
+
+    async def slow_send(chat_id, msg):
+        started.set()
+        await gate.wait()
+
+    runner = SimpleNamespace(
+        adapters={Platform.TELEGRAM: SimpleNamespace(send=slow_send)},
+        config=SimpleNamespace(get_home_channel=lambda p: SimpleNamespace(chat_id="1") if p is Platform.TELEGRAM else None),
+    )
+    adapter.gateway_runner = runner
+    adapter._allowed_user_ids = {"100200300"}
+
+    await adapter._check_slash_authorization(_make_interaction("999999999"), "/bg hi")
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    tracked = [t for t in adapter._background_tasks if "_notify_unauthorized_slash" in repr(t.get_coro())]
+    assert len(tracked) == 1
+    gate.set()
+    await asyncio.wait_for(tracked[0], timeout=2)
+    assert tracked[0] not in adapter._background_tasks
+
+
 # ---------------------------------------------------------------------------
 # Opt-in visibility hide
 # ---------------------------------------------------------------------------
