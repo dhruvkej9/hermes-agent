@@ -575,3 +575,37 @@ class TestMediaPublicUrlGuard:
         assert not result.success
         assert "LINE_PUBLIC_URL" in (result.error or "")
 
+
+# ---------------------------------------------------------------------------
+# DM typing indicator task tracking
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dm_loading_indicator_task_is_tracked_until_done(monkeypatch):
+    monkeypatch.delenv("LINE_CHANNEL_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("LINE_CHANNEL_SECRET", raising=False)
+    from gateway.config import PlatformConfig
+
+    ad = LineAdapter(PlatformConfig(enabled=True, extra={"channel_access_token": "tok", "channel_secret": "sec"}))
+    started, gate = asyncio.Event(), asyncio.Event()
+
+    async def slow_loading(chat_id):
+        started.set()
+        await gate.wait()
+
+    ad._client = MagicMock()
+    ad._client.loading = slow_loading
+    ad.handle_message = AsyncMock()
+    await ad._handle_message_event({
+        "type": "message",
+        "replyToken": "reply-token",
+        "source": {"type": "user", "userId": "Uline"},
+        "message": {"type": "text", "id": "m1", "text": "hi"},
+    })
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    tracked = [t for t in ad._background_tasks if "slow_loading" in repr(t.get_coro())]
+    assert len(tracked) == 1
+    gate.set()
+    await asyncio.wait_for(tracked[0], timeout=2)
+    assert tracked[0] not in ad._background_tasks

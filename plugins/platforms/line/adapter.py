@@ -566,7 +566,9 @@ class LineAdapter(BasePlatformAdapter):
         else:
             text = f"[unsupported message type: {msg_type}]"
         if chat_type == "dm" and self._client:  # best-effort typing indicator (DM only)
-            asyncio.create_task(self._client.loading(chat_id))
+            task = asyncio.create_task(self._client.loading(chat_id))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
         source_obj = self.build_source(
             chat_id=chat_id, chat_type=chat_type, user_id=user_id, user_name=user_id, chat_name=chat_id,
             message_id=message_id)
