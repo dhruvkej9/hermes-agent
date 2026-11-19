@@ -173,6 +173,8 @@ class LSPClient:
         self._cleanup_lock = asyncio.Lock()
         self._next_id: int = 0
         self._pending: dict[int, asyncio.Future] = {}
+        # Handlers for server requests; held here because the loop keeps tasks only weakly.
+        self._request_tasks: set[asyncio.Task] = set()
 
         # Server → client requests; anything else gets method-not-found.  Capability (un)registration
         # and diagnostic refresh are acknowledged but not acted on: we re-pull on every touch anyway.
@@ -345,7 +347,9 @@ class LSPClient:
         if kind == "response":
             self._dispatch_response(key, msg)
         elif kind == "request":
-            asyncio.create_task(self._dispatch_request(key, msg))
+            task = asyncio.create_task(self._dispatch_request(key, msg))
+            self._request_tasks.add(task)
+            task.add_done_callback(self._request_tasks.discard)
         elif kind == "notification":
             self._dispatch_notification(key, msg)
         else:
