@@ -207,7 +207,9 @@ class WeComStreamMixin:
         turn.keepalive_handle = None
         if not (turn.finalized or turn.expired):
             try:
-                asyncio.ensure_future(self._keepalive_send(turn, turn_id))
+                task = asyncio.ensure_future(self._keepalive_send(turn, turn_id))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
             except RuntimeError:
                 pass
 
