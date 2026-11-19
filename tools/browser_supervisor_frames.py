@@ -108,7 +108,7 @@ class FrameTrackingMixin:
                 )
         # Enable child domains off-loop: awaiting the replies here would deadlock
         # because only the reader can resolve those Futures.
-        asyncio.create_task(self._enable_child_domains(sid))
+        self._spawn(self._enable_child_domains(sid))
 
     async def _enable_child_domains(self, sid: str) -> None:
         """Enable Page+Runtime (+nested setAutoAttach) and the dialog bridge on a child session."""

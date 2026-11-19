@@ -212,13 +212,13 @@ class DialogSupervisionMixin:
         if auto is not None:
             with self._state_lock:
                 self._archive_dialog_locked(dialog, "auto_policy")
-            asyncio.create_task(self._respond_quiet(dialog, accept=auto[0], prompt_text=auto[1]))
+            self._spawn(self._respond_quiet(dialog, accept=auto[0], prompt_text=auto[1]))
             return
         with self._state_lock:
             self._pending_dialogs[dialog.id] = dialog
         self._dialog_watchdogs[dialog.id] = asyncio.get_running_loop().call_later(
             self.dialog_timeout_s,
-            lambda: asyncio.create_task(self._dialog_timeout_expired(dialog.id)),
+            lambda: self._spawn(self._dialog_timeout_expired(dialog.id)),
         )
 
     # ── Responding ───────────────────────────────────────────────────────────

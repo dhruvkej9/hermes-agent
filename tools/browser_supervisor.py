@@ -132,6 +132,15 @@ class CDPSupervisor(DialogSupervisionMixin, FrameTrackingMixin):
         # Dialog auto-dismiss watchdog handles (per dialog id) + id generator.
         self._dialog_watchdogs: dict[str, asyncio.TimerHandle] = {}
         self._dialog_seq = 0
+        # Strong refs for fire-and-forget loop tasks; the loop itself only holds them weakly.
+        self._side_tasks: set[asyncio.Task] = set()
+
+    def _spawn(self, coro) -> asyncio.Task:
+        """Run a coroutine on the supervisor loop as a task kept alive until it finishes."""
+        task = asyncio.create_task(coro)
+        self._side_tasks.add(task)
+        task.add_done_callback(self._side_tasks.discard)
+        return task
 
     # ── Public sync API ──────────────────────────────────────────────────────
 
