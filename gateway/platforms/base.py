@@ -2490,6 +2490,7 @@ class BasePlatformAdapter(_SessionModelSettingsMixin, ABC):
         lands while the dispatch is in flight would abort the agent turn (#12444), so the
         dispatch is shielded and the outer CancelledError swallowed."""
         current_task = asyncio.current_task()
+        event = None
         try:
             await asyncio.sleep(self._text_batch_delay_for(self._pending_text_batches.get(key)))
             owner = self._pending_text_batch_tasks.get(key)
@@ -2502,6 +2503,11 @@ class BasePlatformAdapter(_SessionModelSettingsMixin, ABC):
             await asyncio.shield(self._dispatch_text_batch(event))
         except asyncio.CancelledError:
             pass
+        except Exception as exc:
+            # Nobody awaits this task: an error left here is never retrieved and the user hears nothing.
+            logger.error("[%s] Text batch %s dispatch failed: %s", self.name, key, exc, exc_info=True)
+            if event is not None:
+                await self._notify_turn_error(event, exc)
         finally:
             if self._pending_text_batch_tasks.get(key) is current_task:
                 self._pending_text_batch_tasks.pop(key, None)
