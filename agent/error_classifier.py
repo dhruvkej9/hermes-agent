@@ -1127,9 +1127,15 @@ def _by_status(c: _Ctx) -> Optional[Verdict]:
 # Stage order: plugin hooks → the provider's own profile hook → provider-specific special cases →
 # HTTP status → MoA shapes → structured error code → message patterns → SSL → disconnect +
 # large session → transport types → unknown (retryable with backoff).
+def _unparseable_body(c: _Ctx) -> Optional[Verdict]:
+    """A 200 answer whose body is not JSON (empty, an HTML proxy page): the SDK raises the bare
+    ``JSONDecodeError``. Retry it, and let another provider take it when retries run out."""
+    return _v(_R.incomplete_response, retryable=True, should_fallback=True) if isinstance(c.error, json.JSONDecodeError) else None
+
+
 _STAGES: Sequence[Callable[[_Ctx], Optional[Verdict]]] = (
     _plugin_verdict, _profile_verdict, _provider_special_cases, _by_status, _moa_special_cases,
-    _by_error_code, _by_message, _by_transport,
+    _unparseable_body, _by_error_code, _by_message, _by_transport,
 )
 
 
