@@ -126,7 +126,23 @@ class TestFatalNotifyIsDetached:
 
         assert any(r.levelname == "WARNING" for r in caplog.records)
 
+@pytest.mark.asyncio
+async def test_dispatched_notification_task_is_held_until_done(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = _make_adapter(monkeypatch)
+    started, gate = asyncio.Event(), asyncio.Event()
 
+    async def slow_notify() -> None:
+        started.set()
+        await gate.wait()
+
+    monkeypatch.setattr(adapter, "_notify_fatal_error", slow_notify)
+    adapter._dispatch_fatal_notification()
+    await asyncio.wait_for(started.wait(), timeout=2.0)
+
+    (task,) = adapter._fatal_notify_tasks
+    gate.set()
+    await asyncio.wait_for(task, timeout=2.0)
+    assert not adapter._fatal_notify_tasks
 
 
 async def _noop() -> None:

@@ -760,7 +760,11 @@ class PhotonAdapter(BasePlatformAdapter):
         ``disconnect()``, which cancels those very tasks (via its own wrapper task, so the
         ``current_task()`` guard can't help) — the CancelledError would kill the notifier
         mid-handoff: no log, no reconnect. A fresh task can be cancelled freely."""
-        asyncio.create_task(self._notify_fatal_error_logged())
+        # Own set, not _background_tasks: disconnect() cancels those.
+        tasks = self.__dict__.setdefault("_fatal_notify_tasks", set())
+        task = asyncio.create_task(self._notify_fatal_error_logged())
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
 
     async def _notify_fatal_error_logged(self) -> None:
         try:
